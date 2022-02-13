@@ -351,10 +351,6 @@ def test_installPihole_fresh_install_readableFiles(host):
             'r', '/usr/local/share/man/man8/pihole-FTL.8', piholeuser)
         actual_rc = host.run(check_man).rc
         assert exit_status_success == actual_rc
-        check_man = test_cmd.format(
-            'r', '/usr/local/share/man/man5/pihole-FTL.conf.5', piholeuser)
-        actual_rc = host.run(check_man).rc
-        assert exit_status_success == actual_rc
     # check not readable sudoers file
     check_sudo = test_cmd.format(
         'r', '/etc/sudoers.d/pihole', piholeuser)
@@ -1085,9 +1081,9 @@ def test_os_check_fails(host):
     install_dependent_packages ${OS_CHECK_DEPS[@]}
     install_dependent_packages ${INSTALLER_DEPS[@]}
     cat <<EOT > /etc/os-release
-    ID=UnsupportedOS
-    VERSION_ID="2"
-    EOT
+ID=UnsupportedOS
+VERSION_ID="2"
+EOT
     ''')
     detectOS = host.run('''t
     source /opt/pihole/basic-install.sh

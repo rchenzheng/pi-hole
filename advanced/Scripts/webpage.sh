@@ -37,15 +37,16 @@ Example: pihole -a -p password
 Set options for the Admin Console
 
 Options:
-  -p, password        Set Admin Console password
-  -c, celsius         Set Celsius as preferred temperature unit
-  -f, fahrenheit      Set Fahrenheit as preferred temperature unit
-  -k, kelvin          Set Kelvin as preferred temperature unit
-  -e, email           Set an administrative contact address for the Block Page
-  -h, --help          Show this help dialog
-  -i, interface       Specify dnsmasq's interface listening behavior
-  -l, privacylevel    Set privacy level (0 = lowest, 3 = highest)
-  -t, teleporter      Backup configuration as an archive"
+  -p, password                    Set Admin Console password
+  -c, celsius                     Set Celsius as preferred temperature unit
+  -f, fahrenheit                  Set Fahrenheit as preferred temperature unit
+  -k, kelvin                      Set Kelvin as preferred temperature unit
+  -e, email                       Set an administrative contact address for the Block Page
+  -h, --help                      Show this help dialog
+  -i, interface                   Specify dnsmasq's interface listening behavior
+  -l, privacylevel                Set privacy level (0 = lowest, 3 = highest)
+  -t, teleporter                  Backup configuration as an archive
+  -t, teleporter myname.tar.gz    Backup configuration to archive with name myname.tar.gz as specified"
     exit 0
 }
 
@@ -199,6 +200,8 @@ trust-anchor=.,20326,8,2,E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC68345710423
     # Setup interface listening behavior of dnsmasq
     delete_dnsmasq_setting "interface"
     delete_dnsmasq_setting "local-service"
+    delete_dnsmasq_setting "except-interface"
+    delete_dnsmasq_setting "bind-interfaces"
 
     if [[ "${DNSMASQ_LISTENING}" == "all" ]]; then
         # Listen on all interfaces, permit all origins
@@ -207,6 +210,7 @@ trust-anchor=.,20326,8,2,E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC68345710423
         # Listen only on all interfaces, but only local subnets
         add_dnsmasq_setting "local-service"
     else
+        # Options "bind" and "single"
         # Listen only on one interface
         # Use eth0 as fallback interface if interface is missing in setupVars.conf
         if [ -z "${PIHOLE_INTERFACE}" ]; then
@@ -214,6 +218,11 @@ trust-anchor=.,20326,8,2,E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC68345710423
         fi
 
         add_dnsmasq_setting "interface" "${PIHOLE_INTERFACE}"
+
+        if [[ "${DNSMASQ_LISTENING}" == "bind" ]]; then
+            # Really bind to interface
+            add_dnsmasq_setting "bind-interfaces"
+        fi
     fi
 
     if [[ "${CONDITIONAL_FORWARDING}" == true ]]; then
@@ -515,13 +524,13 @@ CustomizeAdLists() {
 
     if CheckUrl "${address}"; then
         if [[ "${args[2]}" == "enable" ]]; then
-            sqlite3 "${gravityDBfile}" "UPDATE adlist SET enabled = 1 WHERE address = '${address}'"
+            pihole-FTL sqlite3 "${gravityDBfile}" "UPDATE adlist SET enabled = 1 WHERE address = '${address}'"
         elif [[ "${args[2]}" == "disable" ]]; then
-            sqlite3 "${gravityDBfile}" "UPDATE adlist SET enabled = 0 WHERE address = '${address}'"
+            pihole-FTL sqlite3 "${gravityDBfile}" "UPDATE adlist SET enabled = 0 WHERE address = '${address}'"
         elif [[ "${args[2]}" == "add" ]]; then
-            sqlite3 "${gravityDBfile}" "INSERT OR IGNORE INTO adlist (address, comment) VALUES ('${address}', '${comment}')"
+            pihole-FTL sqlite3 "${gravityDBfile}" "INSERT OR IGNORE INTO adlist (address, comment) VALUES ('${address}', '${comment}')"
         elif [[ "${args[2]}" == "del" ]]; then
-            sqlite3 "${gravityDBfile}" "DELETE FROM adlist WHERE address = '${address}'"
+            pihole-FTL sqlite3 "${gravityDBfile}" "DELETE FROM adlist WHERE address = '${address}'"
         else
             echo "Not permitted"
             return 1
@@ -600,9 +609,10 @@ Example: 'pihole -a -i local'
 Specify dnsmasq's network interface listening behavior
 
 Interfaces:
-  local               Listen on all interfaces, but only allow queries from
-                      devices that are at most one hop away (local devices)
-  single              Listen only on ${PIHOLE_INTERFACE} interface
+  local               Only respond to queries from devices that
+                      are at most one hop away (local devices)
+  single              Respond only on interface ${PIHOLE_INTERFACE}
+  bind                Bind only on interface ${PIHOLE_INTERFACE}
   all                 Listen on all interfaces, permit all origins"
         exit 0
     fi
@@ -613,6 +623,9 @@ Interfaces:
     elif [[ "${args[2]}" == "local" ]]; then
         echo -e "  ${INFO} Listening on all interfaces, permitting origins from one hop away (LAN)"
         change_setting "DNSMASQ_LISTENING" "local"
+    elif [[ "${args[2]}" == "bind" ]]; then
+        echo -e "  ${INFO} Binding on interface ${PIHOLE_INTERFACE}"
+        change_setting "DNSMASQ_LISTENING" "bind"
     else
         echo -e "  ${INFO} Listening only on interface ${PIHOLE_INTERFACE}"
         change_setting "DNSMASQ_LISTENING" "single"
@@ -628,12 +641,17 @@ Interfaces:
 }
 
 Teleporter() {
-    local datetimestamp
-    local host
-    datetimestamp=$(date "+%Y-%m-%d_%H-%M-%S")
-    host=$(hostname)
-    host="${host//./_}"
-    php /var/www/html/admin/scripts/pi-hole/php/teleporter.php > "pi-hole-${host:-noname}-teleporter_${datetimestamp}.tar.gz"
+    local filename
+    filename="${args[2]}"
+    if [[ -z "${filename}" ]]; then
+        local datetimestamp
+        local host
+        datetimestamp=$(date "+%Y-%m-%d_%H-%M-%S")
+        host=$(hostname)
+        host="${host//./_}"
+        filename="pi-hole-${host:-noname}-teleporter_${datetimestamp}.tar.gz"
+    fi
+    php /var/www/html/admin/scripts/pi-hole/php/teleporter.php > "${filename}"
 }
 
 checkDomain()
@@ -669,12 +687,12 @@ addAudit()
     done
     # Insert only the domain here. The date_added field will be
     # filled with its default value (date_added = current timestamp)
-    sqlite3 "${gravityDBfile}" "INSERT INTO domain_audit (domain) VALUES ${domains};"
+    pihole-FTL sqlite3 "${gravityDBfile}" "INSERT INTO domain_audit (domain) VALUES ${domains};"
 }
 
 clearAudit()
 {
-    sqlite3 "${gravityDBfile}" "DELETE FROM domain_audit;"
+    pihole-FTL sqlite3 "${gravityDBfile}" "DELETE FROM domain_audit;"
 }
 
 SetPrivacyLevel() {
@@ -721,7 +739,7 @@ RemoveCustomDNSAddress() {
     validHost="$(checkDomain "${host}")"
     if [[ -n "${validHost}" ]]; then
         if valid_ip "${ip}" || valid_ip6 "${ip}" ; then
-            sed -i "/^${ip} ${validHost}$/d" "${dnscustomfile}"
+            sed -i "/^${ip} ${validHost}$/Id" "${dnscustomfile}"
         else
             echo -e "  ${CROSS} Invalid IP has been passed"
             exit 1
@@ -774,7 +792,7 @@ RemoveCustomCNAMERecord() {
     if [[ -n "${validDomain}" ]]; then
         validTarget="$(checkDomain "${target}")"
         if [[ -n "${validTarget}" ]]; then
-            sed -i "/cname=${validDomain},${validTarget}$/d" "${dnscustomcnamefile}"
+            sed -i "/cname=${validDomain},${validTarget}$/Id" "${dnscustomcnamefile}"
         else
             echo "  ${CROSS} Invalid Target Passed!"
             exit 1
